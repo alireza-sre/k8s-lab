@@ -1,0 +1,96 @@
+# Repo-level Atlantis config.
+#
+# Layers 00-bootstrap and 05-atlantis are intentionally NOT listed: they are
+# applied locally (the state bucket and Atlantis cannot manage themselves).
+# Because projects are listed explicitly, Atlantis ignores any directory not
+# named here.
+#
+# Ordering is enforced two ways:
+#   execution_order_group  orders a bulk `atlantis plan` / `atlantis apply`
+#                          (lower groups run first; with
+#                          abort_on_execution_order_fail a failure stops
+#                          every later group)
+#   depends_on             refuses `atlantis apply -p <layer>` while a layer
+#                          it depends on (in the same PR) is still unapplied
+version: 3
+automerge: false
+parallel_plan: false
+parallel_apply: false
+abort_on_execution_order_fail: true
+
+projects:
+  - name: lab-10-network
+    dir: live/lab/10-network
+    workflow: layered
+    execution_order_group: 10
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ".terraform.lock.hcl"
+        - "../common.tfvars"
+        - "../backend.hcl"
+        - "../../../modules/vpc/**"
+        - "../../../modules/ssm-outputs/**"
+
+  - name: lab-20-identity
+    dir: live/lab/20-identity
+    workflow: layered
+    execution_order_group: 20
+    depends_on: [lab-10-network]
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ".terraform.lock.hcl"
+        - "../common.tfvars"
+        - "../backend.hcl"
+        - "../../../modules/kms-key/**"
+        - "../../../modules/irsa-issuer/**"
+        - "../../../modules/ssm-outputs/**"
+
+  - name: lab-30-cluster
+    dir: live/lab/30-cluster
+    workflow: layered
+    execution_order_group: 30
+    depends_on: [lab-10-network, lab-20-identity]
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars" # includes ami.auto.tfvars, updated by the node-ami workflow
+        - ".terraform.lock.hcl"
+        - "../common.tfvars"
+        - "../backend.hcl"
+        - "../../../modules/k8s-cluster-kubeadm/**"
+        - "../../../modules/k8s-node-pool/**"
+        - "../../../modules/ssm-outputs/**"
+
+  - name: lab-40-edge
+    dir: live/lab/40-edge
+    workflow: layered
+    execution_order_group: 40
+    depends_on: [lab-10-network, lab-30-cluster]
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ".terraform.lock.hcl"
+        - "../common.tfvars"
+        - "../backend.hcl"
+        - "../../../modules/nlb/**"
+        - "../../../modules/ssm-outputs/**"
+
+  - name: lab-50-platform-iam
+    dir: live/lab/50-platform-iam
+    workflow: layered
+    execution_order_group: 50
+    depends_on: [lab-20-identity, lab-30-cluster, lab-40-edge]
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ".terraform.lock.hcl"
+        - "../common.tfvars"
+        - "../backend.hcl"
+        - "../../../modules/irsa-role/**"
+        - "../../../modules/ssm-outputs/**"

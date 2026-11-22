@@ -1,0 +1,8 @@
+# Partial S3 backend configuration shared by every layer.
+# scripts/bootstrap-backend.sh writes the real ../backend.hcl from the
+# 00-bootstrap outputs. Each layer only sets its own `key` in versions.tf.
+bucket       = "kube-ec2-lab-tfstate-000000000000"
+region       = "eu-central-1"
+encrypt      = true
+kms_key_id   = "arn:aws:kms:eu-central-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+use_lockfile = true
