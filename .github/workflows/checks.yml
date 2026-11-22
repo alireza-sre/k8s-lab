@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      # security-events: write # findings land in the repo's Security tab
+      security-events: write # findings land in the repo's Security tab
     steps:
       - uses: actions/checkout@v4
       # Pin the image by digest once you've triaged the first run, and set
@@ -60,11 +60,10 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest config \
             --severity HIGH,CRITICAL --ignorefile .trivyignore \
-            --exit-code 0 .
-      # --format sarif --output trivy.sarif
-      # - uses: github/codeql-action/upload-sarif@v4
-      #  with:
-      #    sarif_file: trivy.sarif
+            --format sarif --output trivy.sarif --exit-code 0 .
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
 
   shell:
     runs-on: ubuntu-latest
