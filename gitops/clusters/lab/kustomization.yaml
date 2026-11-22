@@ -1,0 +1,17 @@
+# Root of everything Argo CD (argocd-platform) manages in the lab cluster.
+# The first control-plane node points the "root" Application here.
+#
+# Next step: add Applications (app-of-apps) for, in this order:
+#   cilium, aws-cloud-controller-manager, argo-cd   (adopt day-0 installs; same
+#                                                    release names/namespaces)
+#   kubelet-csr-approver, metrics-server, aws-ebs-csi-driver,
+#   aws-node-termination-handler (queue mode), cluster-autoscaler,
+#   aws-load-balancer-controller (TargetGroupBinding only),
+#   gateway-api CRDs, envoy-gateway, cert-manager, external-dns,
+#   kyverno + policies, pod-identity-webhook (IRSA), tenant Argo CD
+#
+# IAM role ARNs:     SSM /kube-ec2/lab/50-platform-iam/role_<name>_arn
+# Target group ARNs: SSM /kube-ec2/lab/40-edge/{public,internal}_tg_{http,https}_arn
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
