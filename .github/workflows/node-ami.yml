@@ -1,0 +1,119 @@
+# Weekly node image rebuild: newest Ubuntu base + all OS updates + newest
+# Kubernetes patch of the tracked minor. Opens a PR that bumps
+# live/lab/30-cluster/ami.auto.tfvars; Atlantis plans it, a human approves,
+# `atlantis apply` rolls the worker pools (control plane: run
+# scripts/roll-control-plane.sh afterwards).
+name: node-ami
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      kubernetes_minor:
+        description: "Kubernetes minor to build (e.g. 1.36). Empty = packer default."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC -> AWS (no stored keys)
+
+concurrency:
+  group: node-ami
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Environment-scoped trust: the IAM role only trusts
+    # repo:<owner>/<repo>:environment:ami-build
+    environment: ami-build
+    outputs:
+      ami_id: ${{ steps.result.outputs.ami_id }}
+      kubernetes_version: ${{ steps.result.outputs.kubernetes_version }}
+    defaults:
+      run:
+        working-directory: packer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PACKER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: node-ami-${{ github.run_id }}
+
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: "1.16.2"
+
+      - name: Build
+        env:
+          MINOR: ${{ inputs.kubernetes_minor }}
+        run: |
+          set -euo pipefail
+          packer init .
+          args=(-var "region=${{ vars.AWS_REGION }}")
+          [[ -n "${MINOR:-}" ]] && args+=(-var "kubernetes_minor=${MINOR}")
+          packer build -color=false "${args[@]}" . | tee build.log
+
+      - name: Extract AMI ID and Kubernetes version
+        id: result
+        run: |
+          set -euo pipefail
+          ami="$(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d: -f2)"
+          ver="$(grep -oE 'Installed Kubernetes v[0-9.]+' build.log | tail -n1 | awk '{print $3}')"
+          [[ $ami == ami-* && -n $ver ]] || { echo "could not parse build output"; exit 1; }
+          echo "ami_id=$ami" >> "$GITHUB_OUTPUT"
+          echo "kubernetes_version=$ver" >> "$GITHUB_OUTPUT"
+          echo "### Built $ami (Kubernetes $ver)" >> "$GITHUB_STEP_SUMMARY"
+
+  propose:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # PRs opened with GITHUB_TOKEN don't trigger other workflows (the checks
+      # would never run). A GitHub App token avoids that.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Bump ami.auto.tfvars
+        run: |
+          set -euo pipefail
+          f=live/lab/30-cluster/ami.auto.tfvars
+          sed -i -E 's/^node_ami_id *=.*/node_ami_id             = "${{ needs.build.outputs.ami_id }}"/' "$f"
+          sed -i -E 's/^node_kubernetes_version *=.*/node_kubernetes_version = "${{ needs.build.outputs.kubernetes_version }}"/' "$f"
+          cat "$f"
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: bot/node-ami
+          delete-branch: true
+          commit-message: "chore(nodes): AMI ${{ needs.build.outputs.ami_id }} (Kubernetes ${{ needs.build.outputs.kubernetes_version }})"
+          title: "Node AMI ${{ needs.build.outputs.ami_id }} (Kubernetes ${{ needs.build.outputs.kubernetes_version }})"
+          labels: nodes, automated
+          body: |
+            Weekly node image rebuild (OS security updates + Kubernetes patch).
+
+            - AMI: `${{ needs.build.outputs.ami_id }}`
+            - Kubernetes: `${{ needs.build.outputs.kubernetes_version }}`
+            - Build: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            After `atlantis apply`:
+            1. Worker pools roll automatically (ASG instance refresh, drained via node-termination-handler).
+            2. Control plane: `scripts/roll-control-plane.sh lab` (one node at a time).
+
+            If the Kubernetes **minor** changed, upgrade the control plane with
+            `kubeadm upgrade apply` first; see docs/runbooks.md.

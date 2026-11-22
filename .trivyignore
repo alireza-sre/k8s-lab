@@ -1,0 +1,12 @@
+# Accepted by design (each documented where the resource is defined):
+#
+# Public NLB and the Atlantis host must accept traffic from the internet.
+AVD-AWS-0107
+AVD-AWS-0104
+# IRSA discovery bucket serves two objects publicly (STS must fetch them).
+AVD-AWS-0086
+AVD-AWS-0087
+AVD-AWS-0091
+AVD-AWS-0093
+# SSE-S3 on the IRSA bucket: anonymous readers can't use KMS.
+AVD-AWS-0132

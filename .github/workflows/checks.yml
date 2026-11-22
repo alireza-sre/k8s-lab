@@ -1,0 +1,98 @@
+# Static checks on every PR. Plans and applies are Atlantis's job; these
+# checks need no AWS credentials.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: "1.17.1"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate (every module and layer)
+        run: |
+          set -euo pipefail
+          for d in modules/*/ live/*/*/; do
+            echo "::group::$d"
+            (cd "$d" && terraform init -backend=false -input=false >/dev/null && terraform validate)
+            echo "::endgroup::"
+          done
+
+      - uses: terraform-linters/setup-tflint@v4
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # findings land in the repo's Security tab
+    steps:
+      - uses: actions/checkout@v4
+      # Pin the image by digest once you've triaged the first run, and set
+      # --exit-code 1 to make HIGH/CRITICAL findings blocking.
+      - name: Trivy IaC scan
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest config \
+            --severity HIGH,CRITICAL --ignorefile .trivyignore \
+            --format sarif --output trivy.sarif --exit-code 0 .
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          shellcheck -x -P packer/files/k8s-bootstrap/lib \
+            packer/files/k8s-bootstrap/bin/* packer/files/k8s-bootstrap/lib/*.sh \
+            packer/scripts/*.sh scripts/*.sh
+
+  packer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: "1.16.2"
+      - run: packer init .
+      - run: packer fmt -check .
+      - run: packer validate .
+
+  yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet yamllint
+      - name: yamllint
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' atlantis.yaml .github/ gitops/
