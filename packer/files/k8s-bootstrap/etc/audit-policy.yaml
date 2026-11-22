@@ -1,0 +1,71 @@
+# kube-apiserver audit policy. First matching rule wins.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # Never log secret payloads, only who touched them.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts/token"]
+      - group: authentication.k8s.io
+        resources: ["tokenreviews"]
+
+  # High-volume, low-value noise.
+  - level: None
+    users: ["system:kube-proxy"]
+    verbs: ["watch"]
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: ["get"]
+    resources:
+      - group: ""
+        resources: ["nodes", "nodes/status"]
+  - level: None
+    users:
+      - system:kube-controller-manager
+      - system:kube-scheduler
+      - system:serviceaccount:kube-system:endpoint-controller
+    verbs: ["get", "update"]
+    namespaces: ["kube-system"]
+    resources:
+      - group: ""
+        resources: ["endpoints"]
+      - group: coordination.k8s.io
+        resources: ["leases"]
+  - level: None
+    nonResourceURLs:
+      - /healthz*
+      - /livez*
+      - /readyz*
+      - /version
+      - /openid/v1/jwks
+      - /.well-known/openid-configuration
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events"]
+      - group: events.k8s.io
+        resources: ["events"]
+
+  # Interactive access to workloads: full detail.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy", "services/proxy", "nodes/proxy"]
+
+  # RBAC and admission changes: full detail.
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+    resources:
+      - group: rbac.authorization.k8s.io
+      - group: admissionregistration.k8s.io
+      - group: certificates.k8s.io
+
+  # All other writes: request bodies.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+
+  # Reads: metadata only.
+  - level: Metadata

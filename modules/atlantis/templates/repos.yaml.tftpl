@@ -1,0 +1,35 @@
+# Server-side repo config. This is the security boundary: the repo-level
+# atlantis.yaml can only pick the "layered" workflow defined here and can
+# never define its own commands (allow_custom_workflows: false).
+repos:
+  - id: github.com/${github_repository}
+    branch: /^main$/
+    plan_requirements: []
+    apply_requirements: [approved, mergeable, undiverged]
+    import_requirements: [approved, mergeable, undiverged]
+    allowed_overrides: [workflow, delete_source_branch_on_merge]
+    allowed_workflows: [layered]
+    allow_custom_workflows: false
+    delete_source_branch_on_merge: true
+    repo_locks:
+      mode: on_plan
+
+workflows:
+  layered:
+    plan:
+      steps:
+        - env:
+            name: TF_IN_AUTOMATION
+            value: "true"
+        # Every layer shares the partial backend config and common variables
+        # one directory up; each layer sets only its own state key.
+        - init:
+            extra_args: ["-input=false", "-backend-config=../backend.hcl"]
+        - plan:
+            extra_args: ["-input=false", "-var-file=../common.tfvars"]
+    apply:
+      steps:
+        - env:
+            name: TF_IN_AUTOMATION
+            value: "true"
+        - apply

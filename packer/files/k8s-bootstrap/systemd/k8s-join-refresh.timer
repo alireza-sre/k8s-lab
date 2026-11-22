@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh kubeadm join material and IRSA discovery documents (timer)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

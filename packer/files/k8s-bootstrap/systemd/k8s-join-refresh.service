@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh kubeadm join material and IRSA discovery documents
+After=kubelet.service
+ConditionPathExists=/var/lib/k8s-bootstrap/done
+
+[Service]
+Type=oneshot
+ExecStart=/opt/k8s-bootstrap/bin/k8s-join-refresh

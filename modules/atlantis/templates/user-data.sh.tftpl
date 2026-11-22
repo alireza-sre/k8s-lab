@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Atlantis host bootstrap (Amazon Linux 2023). Rendered by Terraform.
+# Secrets are read from SSM at boot and never appear in user data.
+set -Eeuo pipefail
+exec > >(tee -a /var/log/atlantis-bootstrap.log) 2>&1
+
+REGION="${region}"
+PREFIX="${secrets_prefix}"
+ATLANTIS_IMAGE="${atlantis_image}"
+CADDY_IMAGE="${caddy_image}"
+export AWS_DEFAULT_REGION="$REGION"
+
+# --- OS ---------------------------------------------------------------------
+dnf -y upgrade --releasever=latest
+dnf -y install docker jq
+systemctl enable --now docker
+
+# 1 GiB of RAM is not enough for terraform + the AWS provider. Swap prevents
+# the OOM killer from ending plans mid-run.
+if ! swapon --show | grep -q /swapfile; then
+  dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- Secrets ------------------------------------------------------------------
+ssm() { aws ssm get-parameter --name "$PREFIX/$1" --with-decryption --query Parameter.Value --output text; }
+
+install -d -m 0755 /etc/atlantis /var/lib/atlantis /var/lib/caddy/data /var/lib/caddy/config
+
+docker pull "$ATLANTIS_IMAGE"
+docker pull "$CADDY_IMAGE"
+ATLANTIS_UID="$(docker run --rm --entrypoint id "$ATLANTIS_IMAGE" -u)"
+ATLANTIS_GID="$(docker run --rm --entrypoint id "$ATLANTIS_IMAGE" -g)"
+
+# Fetch first so a missing parameter aborts the script (errors inside a
+# heredoc's command substitution would be silently ignored).
+GH_APP_ID="$(ssm github-app-id)"
+GH_WEBHOOK_SECRET="$(ssm github-webhook-secret)"
+WEB_PASSWORD="$(ssm web-password)"
+
+umask 077
+ssm github-app-key > /etc/atlantis/gh-app-key.pem
+chown "$ATLANTIS_UID:$ATLANTIS_GID" /etc/atlantis/gh-app-key.pem
+chmod 0400 /etc/atlantis/gh-app-key.pem
+chown -R "$ATLANTIS_UID:$ATLANTIS_GID" /var/lib/atlantis
+
+cat > /etc/atlantis/atlantis.env <<EOF
+ATLANTIS_ATLANTIS_URL=https://${domain_name}
+ATLANTIS_PORT=4141
+ATLANTIS_DATA_DIR=/atlantis-data
+ATLANTIS_REPO_ALLOWLIST=github.com/${github_repository}
+ATLANTIS_REPO_CONFIG=/etc/atlantis/repos.yaml
+ATLANTIS_GH_APP_ID=$GH_APP_ID
+ATLANTIS_GH_APP_KEY_FILE=/etc/atlantis/gh-app-key.pem
+ATLANTIS_GH_APP_SLUG=${github_app_slug}
+ATLANTIS_GH_WEBHOOK_SECRET=$GH_WEBHOOK_SECRET
+ATLANTIS_WRITE_GIT_CREDS=true
+ATLANTIS_DEFAULT_TF_VERSION=v${terraform_version}
+ATLANTIS_CHECKOUT_STRATEGY=merge
+ATLANTIS_GH_ALLOW_MERGEABLE_BYPASS_APPLY=true
+ATLANTIS_HIDE_PREV_PLAN_COMMENTS=true
+ATLANTIS_SILENCE_NO_PROJECTS=true
+ATLANTIS_PARALLEL_POOL_SIZE=1
+ATLANTIS_WEB_BASIC_AUTH=true
+ATLANTIS_WEB_USERNAME=admin
+ATLANTIS_WEB_PASSWORD=$WEB_PASSWORD
+AWS_REGION=$REGION
+%{ if github_app_installation_id != "" ~}
+ATLANTIS_GH_INSTALLATION_ID=${github_app_installation_id}
+%{ endif ~}
+%{ if github_team_allowlist != "" ~}
+ATLANTIS_GH_TEAM_ALLOWLIST=${github_team_allowlist}
+%{ endif ~}
+EOF
+umask 022
+
+cat > /etc/atlantis/repos.yaml <<'EOF'
+${repos_yaml}
+EOF
+
+cat > /etc/atlantis/Caddyfile <<'EOF'
+{
+	email ${acme_email}
+}
+
+${domain_name} {
+	encode gzip
+	reverse_proxy 127.0.0.1:4141
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		-Server
+	}
+}
+EOF
+
+# --- Services -------------------------------------------------------------------
+LOG_OPTS="--log-driver awslogs --log-opt awslogs-region=$REGION --log-opt awslogs-group=${log_group_name}"
+
+cat > /etc/systemd/system/atlantis.service <<EOF
+[Unit]
+Description=Atlantis
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-/usr/bin/docker rm -f atlantis
+ExecStart=/usr/bin/docker run --rm --name atlantis --network host \\
+  $LOG_OPTS --log-opt awslogs-stream=atlantis \\
+  --env-file /etc/atlantis/atlantis.env \\
+  -v /var/lib/atlantis:/atlantis-data \\
+  -v /etc/atlantis/repos.yaml:/etc/atlantis/repos.yaml:ro \\
+  -v /etc/atlantis/gh-app-key.pem:/etc/atlantis/gh-app-key.pem:ro \\
+  $ATLANTIS_IMAGE server
+ExecStop=/usr/bin/docker stop -t 300 atlantis
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/caddy.service <<EOF
+[Unit]
+Description=Caddy TLS reverse proxy for Atlantis
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=10
+ExecStartPre=-/usr/bin/docker rm -f caddy
+ExecStart=/usr/bin/docker run --rm --name caddy --network host \\
+  $LOG_OPTS --log-opt awslogs-stream=caddy \\
+  -v /etc/atlantis/Caddyfile:/etc/caddy/Caddyfile:ro \\
+  -v /var/lib/caddy/data:/data \\
+  -v /var/lib/caddy/config:/config \\
+  $CADDY_IMAGE
+ExecStop=/usr/bin/docker stop caddy
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now atlantis.service caddy.service
+echo "atlantis bootstrap complete"

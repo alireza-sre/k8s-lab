@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Runs every 2 min on each control-plane node (k8s-etcd-reconcile.timer).
+#
+# When a control-plane instance dies, its ASG launches a replacement, but the
+# dead etcd member stays registered. etcd then rejects the newcomer (adding a
+# 4th member while one is down would leave the cluster below quorum).
+# This removes members whose instance no longer exists AND whose endpoint is
+# unreachable. Both checks must agree before anything is removed.
+set -Eeuo pipefail
+# shellcheck source=../lib/common.sh
+source /opt/k8s-bootstrap/lib/common.sh
+load_env
+discover_node
+
+etcd_container="$(crictl ps --name '^etcd$' --state running -q | head -n1 || true)"
+[[ -n $etcd_container ]] || {
+  log "etcd not running here; skipping"
+  exit 0
+}
+
+etcdctl() {
+  crictl exec "$etcd_container" etcdctl \
+    --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+    --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+    --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+    --dial-timeout=5s --command-timeout=10s "$@"
+}
+
+# Never touch membership unless the local member is healthy (i.e. we are part
+# of a quorum and can see the real state).
+etcdctl --endpoints=https://127.0.0.1:2379 endpoint health >/dev/null 2>&1 || {
+  log "local etcd unhealthy; skipping"
+  exit 0
+}
+
+# Simple output: "<hex id>, <status>, <name>, <peer urls>, <client urls>, <is learner>"
+while IFS=', ' read -r id status _name peer _rest; do
+  [[ $status == started ]] || continue # never remove a member that is still joining
+  ip="${peer#https://}"
+  ip="${ip%%:*}"
+  [[ $ip == "$NODE_IP" ]] && continue
+
+  alive="$(aws ec2 describe-instances \
+    --filters "Name=private-ip-address,Values=$ip" \
+    "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query 'length(Reservations[].Instances[])' --output text)"
+  [[ $alive == 0 ]] || continue
+
+  if etcdctl --endpoints="https://$ip:2379" endpoint health >/dev/null 2>&1; then
+    continue
+  fi
+
+  log "removing stale etcd member $id ($ip): instance gone and endpoint unreachable"
+  etcdctl --endpoints=https://127.0.0.1:2379 member remove "$id" ||
+    log "remove of $id failed (another node may have removed it)"
+done < <(etcdctl --endpoints=https://127.0.0.1:2379 member list | awk -F', ' '{print $1", "$2", "$3", "$4", "$5}')

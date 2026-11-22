@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Hourly etcd snapshot to S3 (k8s-etcd-backup.timer). Each control-plane node
+# uploads its own copy, keyed by date and node name.
+set -Eeuo pipefail
+# shellcheck source=../lib/common.sh
+source /opt/k8s-bootstrap/lib/common.sh
+load_env
+discover_node
+: "${ETCD_BACKUP_BUCKET:?}" "${KMS_KEY_ID:?}"
+
+etcd_container="$(crictl ps --name '^etcd$' --state running -q | head -n1 || true)"
+[[ -n $etcd_container ]] || {
+  log "etcd not running; skipping backup"
+  exit 0
+}
+
+# /var/lib/etcd is the etcd data dir, mounted at the same path in the pod.
+snapshot=/var/lib/etcd/backup-snapshot.db
+trap 'rm -f "$snapshot"' EXIT
+
+crictl exec "$etcd_container" etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+  --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+  snapshot save "$snapshot" >/dev/null
+
+key="$CLUSTER_NAME/$CLUSTER_GENERATION/$(date -u +%Y/%m/%d/%H%M)-$NODE_NAME.db"
+aws s3 cp "$snapshot" "s3://$ETCD_BACKUP_BUCKET/$key" \
+  --sse aws:kms --sse-kms-key-id "$KMS_KEY_ID" --only-show-errors
+log "etcd snapshot uploaded to s3://$ETCD_BACKUP_BUCKET/$key"

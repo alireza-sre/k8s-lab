@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Entry point, started once per instance by k8s-bootstrap.service (triggered
+# from cloud-init runcmd). Reads /etc/k8s-bootstrap/cluster.env written by
+# user data and turns this machine into a control-plane node or a worker.
+#
+# Platform-neutral apart from IMDS/SSM: on bare metal the same flow works
+# with a NoCloud seed for cluster.env and Vault instead of SSM.
+set -Eeuo pipefail
+
+# shellcheck source=../lib/common.sh
+source /opt/k8s-bootstrap/lib/common.sh
+
+trap 'log "failed at line $LINENO (exit $?)"' ERR
+
+load_env
+install -d -m 0700 "$STATE_DIR"
+
+if [[ -f $STATE_DIR/done ]]; then
+  log "already bootstrapped; nothing to do"
+  exit 0
+fi
+
+discover_node
+hostnamectl set-hostname "$NODE_NAME"
+log "bootstrapping $NODE_NAME ($INSTANCE_ID, $NODE_IP) as $ROLE in cluster $CLUSTER_NAME/$CLUSTER_GENERATION"
+
+case "$ROLE" in
+  control-plane)
+    # shellcheck source=../lib/control-plane.sh
+    source "$K8S_BOOTSTRAP_HOME/lib/control-plane.sh"
+    cp_main
+    ;;
+  worker)
+    # shellcheck source=../lib/worker.sh
+    source "$K8S_BOOTSTRAP_HOME/lib/worker.sh"
+    worker_main
+    ;;
+  *)
+    die "unknown ROLE=$ROLE"
+    ;;
+esac
+
+touch "$STATE_DIR/done"
+log "bootstrap complete"

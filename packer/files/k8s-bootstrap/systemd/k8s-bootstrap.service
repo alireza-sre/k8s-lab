@@ -1,0 +1,19 @@
+[Unit]
+Description=Join this machine to its Kubernetes cluster (kubeadm)
+Documentation=file:///opt/k8s-bootstrap/bin/k8s-bootstrap
+After=network-online.target containerd.service cloud-final.service
+Wants=network-online.target
+Requires=containerd.service
+ConditionPathExists=/etc/k8s-bootstrap/cluster.env
+ConditionPathExists=!/var/lib/k8s-bootstrap/done
+
+[Service]
+Type=oneshot
+ExecStart=/opt/k8s-bootstrap/bin/k8s-bootstrap
+RemainAfterExit=yes
+TimeoutStartSec=90min
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

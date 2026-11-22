@@ -1,0 +1,14 @@
+#cloud-config
+# Everything a node needs to know about its cluster. The logic that uses it is
+# baked into the AMI (/opt/k8s-bootstrap), so the same AMI boots as a
+# control-plane node or any worker pool depending only on this file.
+write_files:
+  - path: /etc/k8s-bootstrap/cluster.env
+    owner: root:root
+    permissions: "0600"
+    content: |
+%{ for k in sort(keys(env)) ~}
+      ${k}=${jsonencode(env[k])}
+%{ endfor ~}
+runcmd:
+  - [systemctl, start, --no-block, k8s-bootstrap.service]

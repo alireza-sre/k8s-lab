@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Runs every 30 min on each control-plane node (k8s-join-refresh.timer).
+#
+#  - publishes a fresh 2h bootstrap token + CA hash for joining nodes
+#  - re-uploads the control-plane certs secret (kubeadm deletes it after 2h)
+#    encrypted with the same certificate key that is stored in SSM
+#  - re-publishes the IRSA discovery documents (picks up SA key rotation)
+#
+# Idempotent; harmless when several control-plane nodes run it concurrently.
+set -Eeuo pipefail
+# shellcheck source=../lib/common.sh
+source /opt/k8s-bootstrap/lib/common.sh
+load_env
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+[[ -f $KUBECONFIG ]] || {
+  log "no admin.conf yet; skipping"
+  exit 0
+}
+kubectl get --raw /readyz >/dev/null || {
+  log "API not ready; skipping"
+  exit 0
+}
+
+cluster_config="$(mktemp)"
+trap 'rm -f "$cluster_config"' EXIT
+kubectl -n kube-system get configmap kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' >"$cluster_config"
+
+kubeadm init phase upload-certs --upload-certs \
+  --config "$cluster_config" \
+  --certificate-key "$(ssm_get "$SSM_PREFIX/join/certificate-key")" >/dev/null
+
+publish_join_material
+publish_irsa_discovery
+log "join material refreshed"
