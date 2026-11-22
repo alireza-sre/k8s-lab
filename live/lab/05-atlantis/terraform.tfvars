@@ -1,4 +1,4 @@
-acme_email      = "platform@fieldstonecloud.net"
+acme_email = "platform@fieldstonecloud.net"
 
 # Your office/VPN egress IPs for the UI. GitHub webhook ranges are added automatically.
 admin_cidrs = ["31.146.76.107/32"]
