@@ -27,7 +27,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # Environment-scoped trust: the IAM role only trusts
-    # repo:<owner>/<repo>:environment:ami-build
+    # repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:ami-build
+    # (immutable OIDC subject, see github_oidc_subject_prefix in 00-bootstrap)
     environment: ami-build
     outputs:
       ami_id: ${{ steps.result.outputs.ami_id }}

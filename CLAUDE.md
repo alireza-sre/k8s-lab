@@ -127,9 +127,11 @@ old lock.
 
 ## GitHub Actions
 
-- `node-ami.yml`: the `build` job assumes `kube-ec2-lab-github-packer` via
-  OIDC; the role trusts only `repo:<github_repository>:environment:ami-build`
-  (case-sensitive). The `propose` job opens the PR as a separate GitHub App
+- `node-ami.yml`: the `build` job assumes `k8s-lab-lab-github-packer` via
+  OIDC. The repo uses GitHub's **immutable OIDC subjects**, so the role
+  trusts `<github_oidc_subject_prefix>:environment:ami-build`, i.e.
+  `repo:<owner>@<id>/<repo>@<id>:…` (case-sensitive; set in
+  `00-bootstrap/terraform.tfvars`, validated against `github_repository`). The `propose` job opens the PR as a separate GitHub App
   (repo-level `BOT_APP_ID` variable, `BOT_APP_PRIVATE_KEY` secret) so
   `checks.yml` runs on it. Setup: `docs/github-actions.md`.
 - `checks.yml`: fmt, validate (every module and layer), tflint, shellcheck,

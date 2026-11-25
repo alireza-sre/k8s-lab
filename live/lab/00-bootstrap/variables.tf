@@ -19,6 +19,27 @@ variable "github_repository" {
   type        = string
 }
 
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    Immutable OIDC subject prefix of github_repository, as GitHub puts it in the
+    token's sub claim: repo:<owner>@<owner_id>/<repo>@<repo_id>. Numeric IDs are
+    never reused, so a renamed/deleted repo re-registered by someone else can't
+    assume the role. Get it with:
+      gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^repo:[^@/:*]+@[0-9]+/[^@/:*]+@[0-9]+$", var.github_oidc_subject_prefix))
+    error_message = "Expected the immutable form repo:<owner>@<owner_id>/<repo>@<repo_id>."
+  }
+
+  validation {
+    condition     = replace(var.github_oidc_subject_prefix, "/@[0-9]+/", "") == "repo:${var.github_repository}"
+    error_message = "github_oidc_subject_prefix must belong to github_repository (same owner/repo names)."
+  }
+}
+
 variable "deployer_role_arn" {
   description = "Declared because common.tfvars sets it for every layer. Not used here: this layer creates the role."
   type        = string

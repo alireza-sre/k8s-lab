@@ -132,7 +132,9 @@ resource "aws_iam_role_policy" "deployer_guardrails" {
 
 # ---------------------------------------------------------------------------
 # GitHub Actions role for the weekly Packer AMI build. Only workflows running
-# in the "ami-build" environment of this repository can assume it.
+# in the "ami-build" environment of this repository can assume it. The repo
+# uses GitHub's immutable OIDC subjects (owner/repo IDs in the sub claim), so
+# the trust names the IDs, not just the names.
 # ---------------------------------------------------------------------------
 data "aws_iam_policy_document" "packer" {
   statement {
@@ -174,7 +176,7 @@ module "github_packer_role" {
   source = "../../../modules/github-oidc-role"
 
   role_name   = "${local.name}-github-packer"
-  subjects    = ["repo:${var.github_repository}:environment:ami-build"]
+  subjects    = ["${var.github_oidc_subject_prefix}:environment:ami-build"]
   policy_json = data.aws_iam_policy_document.packer.json
 }
 
