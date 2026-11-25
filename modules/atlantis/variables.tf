@@ -70,6 +70,38 @@ variable "github_team_allowlist" {
   default     = ""
 }
 
+variable "authorized_users" {
+  description = "GitHub logins allowed to apply, and to plan with extra arguments. Changes take effect within a minute, without replacing the instance."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.authorized_users) > 0 && alltrue([for u in var.authorized_users : can(regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$", u))])
+    error_message = "Give at least one GitHub login (letters, digits, hyphens)."
+  }
+}
+
+variable "authorized_pr_bots" {
+  description = "Bot logins whose PRs may be planned (never applied), e.g. [\"kube-ec2-bot[bot]\"]."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for b in var.authorized_pr_bots : can(regex("^[A-Za-z0-9-]+\\[bot\\]$", b))])
+    error_message = "Bot logins look like <app-slug>[bot]."
+  }
+}
+
+variable "apply_requirements" {
+  description = "Atlantis apply/import requirements. Add \"approved\" once someone other than the PR author reviews."
+  type        = list(string)
+  default     = ["mergeable", "undiverged"]
+
+  validation {
+    condition     = alltrue([for r in var.apply_requirements : contains(["approved", "mergeable", "undiverged"], r)])
+    error_message = "Allowed values: approved, mergeable, undiverged."
+  }
+}
+
 variable "secrets_ssm_prefix" {
   description = "SSM path holding github-app-id, github-app-key, github-webhook-secret, web-password."
   type        = string

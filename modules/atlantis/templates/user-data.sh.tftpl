@@ -63,6 +63,8 @@ ATLANTIS_CHECKOUT_STRATEGY=merge
 ATLANTIS_GH_ALLOW_MERGEABLE_BYPASS_APPLY=true
 ATLANTIS_HIDE_PREV_PLAN_COMMENTS=true
 ATLANTIS_SILENCE_NO_PROJECTS=true
+# Only these comment commands exist; anything else (import, state rm, ...) is refused.
+ATLANTIS_ALLOW_COMMANDS=version,plan,apply,unlock
 ATLANTIS_PARALLEL_POOL_SIZE=1
 ATLANTIS_WEB_BASIC_AUTH=true
 ATLANTIS_WEB_USERNAME=admin
@@ -79,6 +81,44 @@ umask 022
 
 cat > /etc/atlantis/repos.yaml <<'EOF'
 ${repos_yaml}
+EOF
+
+# --- Authorization (who may plan/apply) ---------------------------------------
+# authz-check runs inside the container as the first step of every workflow;
+# atlantis-authz-sync keeps its user lists in step with SSM. Directories (not
+# single files) are bind-mounted so the sync's atomic renames show up inside.
+install -d -m 0755 /etc/atlantis/bin /etc/atlantis/authz
+cat > /etc/atlantis/bin/authz-check <<'AUTHZ_EOF'
+${authz_check}
+AUTHZ_EOF
+chmod 0755 /etc/atlantis/bin/authz-check
+
+cat > /usr/local/bin/atlantis-authz-sync <<'AUTHZ_EOF'
+${authz_sync}
+AUTHZ_EOF
+chmod 0755 /usr/local/bin/atlantis-authz-sync
+/usr/local/bin/atlantis-authz-sync
+
+cat > /etc/systemd/system/atlantis-authz-sync.service <<'EOF'
+[Unit]
+Description=Sync Atlantis authorized users from SSM
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/atlantis-authz-sync
+EOF
+
+cat > /etc/systemd/system/atlantis-authz-sync.timer <<'EOF'
+[Unit]
+Description=Sync Atlantis authorized users from SSM every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
 EOF
 
 cat > /etc/atlantis/Caddyfile <<'EOF'
@@ -111,12 +151,15 @@ Requires=docker.service
 Restart=always
 RestartSec=10
 ExecStartPre=-/usr/bin/docker rm -f atlantis
+ExecStartPre=-/usr/local/bin/atlantis-authz-sync
 ExecStart=/usr/bin/docker run --rm --name atlantis --network host \\
   $LOG_OPTS --log-opt awslogs-stream=atlantis \\
   --env-file /etc/atlantis/atlantis.env \\
   -v /var/lib/atlantis:/atlantis-data \\
   -v /etc/atlantis/repos.yaml:/etc/atlantis/repos.yaml:ro \\
   -v /etc/atlantis/gh-app-key.pem:/etc/atlantis/gh-app-key.pem:ro \\
+  -v /etc/atlantis/bin:/etc/atlantis/bin:ro \\
+  -v /etc/atlantis/authz:/etc/atlantis/authz:ro \\
   $ATLANTIS_IMAGE server
 ExecStop=/usr/bin/docker stop -t 300 atlantis
 
@@ -147,5 +190,5 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now atlantis.service caddy.service
+systemctl enable --now atlantis-authz-sync.timer atlantis.service caddy.service
 echo "atlantis bootstrap complete"

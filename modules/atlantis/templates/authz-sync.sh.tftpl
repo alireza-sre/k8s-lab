@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Copies Atlantis's authorized-user lists from SSM to /etc/atlantis/authz,
+# which is mounted read-only into the Atlantis container. Runs before
+# Atlantis starts and every minute (atlantis-authz-sync.timer), so changing
+# the list in Terraform takes effect within a minute, with no redeploy.
+# Files are replaced atomically; on a failed read the previous list is kept.
+set -euo pipefail
+export AWS_DEFAULT_REGION="${region}"
+
+dir=/etc/atlantis/authz
+install -d -m 0755 "$dir"
+
+fetch() { # fetch <parameter suffix> <file name>
+  local tmp
+  tmp="$(mktemp "$dir/.$2.XXXXXX")"
+  if aws ssm get-parameter --name "${prefix}/$1" --query Parameter.Value --output text |
+    tr ',' ' ' | tr '[:upper:]' '[:lower:]' >"$tmp"; then
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dir/$2"
+  else
+    rm -f "$tmp"
+    echo "atlantis-authz-sync: could not read ${prefix}/$1; keeping the previous list" >&2
+  fi
+}
+
+fetch authorized-users users
+fetch authorized-pr-authors pr-authors

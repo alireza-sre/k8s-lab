@@ -43,3 +43,19 @@ variable "github_team_allowlist" {
   type    = string
   default = ""
 }
+
+variable "authorized_users" {
+  description = "GitHub logins allowed to apply, and to plan with extra arguments."
+  type        = list(string)
+}
+
+variable "authorized_pr_bots" {
+  description = "Bot logins whose PRs may be planned but never applied, e.g. kube-ec2-bot[bot]."
+  type        = list(string)
+  default     = []
+}
+
+variable "apply_requirements" {
+  type    = list(string)
+  default = ["mergeable", "undiverged"]
+}

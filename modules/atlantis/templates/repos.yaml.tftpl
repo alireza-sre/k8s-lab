@@ -5,8 +5,8 @@ repos:
   - id: github.com/${github_repository}
     branch: /^main$/
     plan_requirements: []
-    apply_requirements: [approved, mergeable, undiverged]
-    import_requirements: [approved, mergeable, undiverged]
+    apply_requirements: ${jsonencode(apply_requirements)}
+    import_requirements: ${jsonencode(apply_requirements)}
     allowed_overrides: [workflow, delete_source_branch_on_merge]
     allowed_workflows: [layered]
     allow_custom_workflows: false
@@ -18,6 +18,9 @@ workflows:
   layered:
     plan:
       steps:
+        # Stops the plan unless the PR author (and, for comments with extra
+        # arguments, the commenter) is authorized. See authz-check.sh.
+        - run: /etc/atlantis/bin/authz-check plan
         - env:
             name: TF_IN_AUTOMATION
             value: "true"
@@ -29,6 +32,8 @@ workflows:
             extra_args: ["-input=false", "-var-file=../common.tfvars"]
     apply:
       steps:
+        # Only authorized users may apply, whatever approvals the PR has.
+        - run: /etc/atlantis/bin/authz-check apply
         - env:
             name: TF_IN_AUTOMATION
             value: "true"

@@ -77,7 +77,9 @@ basic auth; it's protected by the webhook secret (HMAC on every delivery).
 ## 4. Configure and apply the Atlantis layer (locally)
 
 Edit `live/lab/05-atlantis/terraform.tfvars` (`domain_name`,
-`route53_zone_id`, `acme_email`, `admin_cidrs`, `github_app_slug`), then:
+`route53_zone_id`, `acme_email`, `admin_cidrs`, `github_app_slug`, and
+`authorized_users`: your GitHub login, see
+[Who can run Atlantis commands](#who-can-run-atlantis-commands)), then:
 
 ```bash
 cd live/lab/05-atlantis
@@ -106,8 +108,9 @@ comment): Atlantis should autoplan `lab-10-network` and comment the plan.
 
 **Settings → Rules → Rulesets → New branch ruleset** targeting `main`:
 
-- Require a pull request, 1 approval, dismiss stale approvals, require review
-  from Code Owners (add a `CODEOWNERS` with your platform team).
+- Require a pull request. With reviewers: 1 approval, dismiss stale
+  approvals, review from Code Owners (add a `CODEOWNERS` file). Alone: 0
+  approvals (GitHub doesn't let you approve your own PR).
 - Require status checks: `atlantis/apply`, plus the `checks` workflow jobs
   (`terraform`, `shell`, `packer`, `yaml`).
 - Block force pushes; restrict deletions.
@@ -118,14 +121,53 @@ deployed. Atlantis is started with `--gh-allow-mergeable-bypass-apply` so
 its own pending apply status doesn't block the `mergeable` apply
 requirement.
 
+## Who can run Atlantis commands
+
+On a public repository anyone can comment on your pull requests, so anyone
+could otherwise comment `atlantis apply` on them. Atlantis's
+`github_team_allowlist` only works for GitHub organizations, so this setup
+checks the user itself: the first step of every plan and apply in the
+server-side workflow runs `authz-check` (`modules/atlantis/templates/authz-check.sh`).
+
+| Action | Allowed when |
+|---|---|
+| plan (autoplan or `atlantis plan` comment) | the PR author is in `authorized_users` or `authorized_pr_bots` |
+| plan with extra Terraform arguments (`atlantis plan -- -var …`) | additionally, the commenter is in `authorized_users` |
+| apply | the commenter is in `authorized_users` |
+
+Other comment commands are disabled (`ATLANTIS_ALLOW_COMMANDS=version,plan,apply,unlock`).
+PRs from forks are never planned (`--allow-fork-prs` is off by default).
+
+The lists are Terraform variables in `live/lab/05-atlantis/terraform.tfvars`:
+
+```hcl
+authorized_users   = ["your-github-login"]
+authorized_pr_bots = ["kube-ec2-bot[bot]"]
+```
+
+They are stored in SSM (`/<project>/<env>/atlantis/authorized-users` and
+`authorized-pr-authors`), not in the instance's user data. A timer on the
+instance copies them into the container every minute, so changing a list
+and applying `05-atlantis` takes effect within a minute without replacing
+the instance. If a list can't be read, the previous copy is kept; if there
+is none, every command is refused.
+
+A refused command shows up in the PR comment as a failed step with
+`authz: DENIED: <reason>`.
+
+For extra protection: **Settings → Moderation options → Interaction limits
+→ Limit to repository collaborators** stops strangers from commenting at all
+(for up to 6 months at a time).
+
 ## How a change flows
 
 1. Open a PR. Atlantis autoplans every project whose `when_modified` paths
    changed (layer files, `../common.tfvars`, `../backend.hcl`, the modules it
    uses) and posts one plan comment per layer.
-2. Review the plans and approve the PR (`apply_requirements: approved,
-   mergeable, undiverged` is enforced server-side).
-3. Comment `atlantis apply`. Projects run lowest `execution_order_group`
+2. Review the plans. If `apply_requirements` includes `approved` (add it
+   once someone else reviews), get the PR approved; `mergeable` and
+   `undiverged` are always enforced server-side.
+3. Comment `atlantis apply` (as one of `authorized_users`). Projects run lowest `execution_order_group`
    first (10 → 20 → 30 → 40 → 50); a failure aborts later groups.
    `atlantis apply -p lab-30-cluster` is refused while a layer it
    `depends_on` in the same PR is unapplied.
@@ -143,7 +185,11 @@ that layer 10 introduces in the same PR, apply 10 first and then re-plan:
   cannot make Atlantis run arbitrary commands via `atlantis.yaml`.
 - Atlantis' instance role can only read/write state and assume the deployer
   role. It has no Kubernetes credentials.
-- Anyone who can comment `atlantis apply` on an approved PR can change
-  infrastructure. Use `github_team_allowlist` (e.g.
-  `platform:plan,platform:apply,platform:unlock`) to restrict commands to a
-  team.
+- Only `authorized_users` can apply, and only PRs by authorized authors are
+  planned (see [Who can run Atlantis commands](#who-can-run-atlantis-commands)).
+  In an organization you can add Atlantis's own `github_team_allowlist` on
+  top.
+- A plan runs the PR's Terraform code with the deployer role, so anyone who
+  can push branches to this repository can run code with those rights. Keep
+  write access to the repository limited to people you'd give the deployer
+  role.
