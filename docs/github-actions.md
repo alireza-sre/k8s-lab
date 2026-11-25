@@ -14,8 +14,14 @@ below) and before the first `node-ami` run.
 
 The `build` job assumes an IAM role through GitHub OIDC, so no AWS keys are
 stored in GitHub. The role (`modules/github-oidc-role`, created by
-`00-bootstrap`) trusts only `repo:<owner>/<repo>:environment:ami-build`, so
-only jobs that run in this environment can assume it.
+`00-bootstrap`) trusts only `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:ami-build`, so only jobs that run in this environment can assume it.  
+The repository uses GitHub's **immutable OIDC subjects**: the token's `sub` claim carries the numeric owner and repository IDs, not just the names. IDs are never reused, so if the repository is renamed or deleted and someone re-registers the name, their tokens still don't match.  
+The prefix is set in `github_oidc_subject_prefix` in `live/lab/00-bootstrap/terraform.tfvars` (validated against `github_repository`); print it with:
+
+  ```bash
+  gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix                                                                                                                                                                      
+  ```
+  If `configure-aws-credentials` fails with *Not authorized to perform sts:AssumeRoleWithWebIdentity*, compare that prefix with the role's trust policy first: a mismatch in the `sub` claim is the usual cause.
 
 **Settings → Environments → New environment** → `ami-build`:
 
