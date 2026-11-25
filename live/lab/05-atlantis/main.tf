@@ -37,6 +37,10 @@ module "atlantis" {
   github_team_allowlist      = var.github_team_allowlist
   secrets_ssm_prefix         = "${local.prefix}/atlantis"
 
+  authorized_users   = var.authorized_users
+  authorized_pr_bots = var.authorized_pr_bots
+  apply_requirements = var.apply_requirements
+
   deployer_role_arn = data.aws_ssm_parameter.bootstrap["deployer_role_arn"].insecure_value
   state_bucket_arn  = data.aws_ssm_parameter.bootstrap["state_bucket_arn"].insecure_value
   state_kms_key_arn = data.aws_ssm_parameter.bootstrap["state_kms_key_arn"].insecure_value

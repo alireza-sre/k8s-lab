@@ -161,10 +161,11 @@ public Route 53 zone, and this code in a GitHub repository.
    create the GitHub App, put its secrets in SSM, apply `05-atlantis`, and
    protect `main`.
 
-4. **First node AMI.** Either run the `node-ami` workflow (set the
-   `ami-build` environment's variables `PACKER_ROLE_ARN` (from the 00
-   outputs) and `AWS_REGION`, plus `BOT_APP_ID` / `BOT_APP_PRIVATE_KEY` for
-   the PR bot), or build locally:
+4. **First node AMI.** Either run the `node-ami` workflow after setting it up
+   per [docs/github-actions.md](docs/github-actions.md): the `ami-build`
+   environment (`PACKER_ROLE_ARN`, `AWS_REGION`), and a small GitHub App
+   that opens the AMI PRs (repository-level `BOT_APP_ID` variable and
+   `BOT_APP_PRIVATE_KEY` secret). Or build locally:
    ```bash
    cd packer && packer init . && packer build -var region=eu-central-1 .
    ```
@@ -172,7 +173,7 @@ public Route 53 zone, and this code in a GitHub repository.
 
 5. **Everything else through Atlantis.** Fill the placeholders in
    `30-cluster/terraform.tfvars`, `40-edge/terraform.tfvars` and
-   `50-platform-iam/terraform.tfvars`, open a PR, review the plans, approve,
+   `50-platform-iam/terraform.tfvars`, open a PR, review the plans,
    comment `atlantis apply`, and merge. Layers 10 → 50 apply in order. For a
    first build, one PR per layer keeps cross-layer plans exact.
 

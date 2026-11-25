@@ -164,7 +164,13 @@ resource "aws_instance" "atlantis" {
     log_group_name             = local.log_group_name
     acme_email                 = var.acme_email
     repos_yaml = templatefile("${path.module}/templates/repos.yaml.tftpl", {
-      github_repository = var.github_repository
+      github_repository  = var.github_repository
+      apply_requirements = var.apply_requirements
+    })
+    authz_check = file("${path.module}/templates/authz-check.sh")
+    authz_sync = templatefile("${path.module}/templates/authz-sync.sh.tftpl", {
+      region = var.region
+      prefix = var.secrets_ssm_prefix
     })
   })
 
@@ -177,6 +183,25 @@ resource "aws_instance" "atlantis" {
   }
 
   depends_on = [aws_cloudwatch_log_group.atlantis]
+}
+
+# ---------------------------------------------------------------------------
+# Authorized GitHub users. Deliberately NOT part of user data: changing the
+# lists updates only these parameters, and the instance picks them up within
+# a minute (atlantis-authz-sync.timer) without being replaced.
+# ---------------------------------------------------------------------------
+resource "aws_ssm_parameter" "authorized_users" {
+  name        = "${var.secrets_ssm_prefix}/authorized-users"
+  description = "GitHub logins allowed to apply and to plan with extra args. Managed by Terraform."
+  type        = "String"
+  value       = join(" ", sort(distinct([for u in var.authorized_users : lower(u)])))
+}
+
+resource "aws_ssm_parameter" "authorized_pr_authors" {
+  name        = "${var.secrets_ssm_prefix}/authorized-pr-authors"
+  description = "GitHub logins whose PRs Atlantis will plan. Managed by Terraform."
+  type        = "String"
+  value       = join(" ", sort(distinct([for u in concat(var.authorized_users, var.authorized_pr_bots) : lower(u)])))
 }
 
 resource "aws_eip" "atlantis" {
