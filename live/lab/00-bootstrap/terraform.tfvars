@@ -5,7 +5,7 @@ admin_principal_arns = [
 ]
 
 # true only in a fresh account that has never used EC2 Auto Scaling.
-create_autoscaling_service_linked_role = false
+create_autoscaling_service_linked_role = true
 
 # Public host name
 public_hostname = "lab.fieldstonecloud.net"
