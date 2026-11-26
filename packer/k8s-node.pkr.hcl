@@ -107,7 +107,7 @@ build {
   }
 
   provisioner "shell" {
-    execute_command = "sudo -E bash -euo pipefail '{{ .Path }}'"
+    execute_command = "sudo env {{ .Vars }} bash -euo pipefail '{{ .Path }}'"
     environment_vars = [
       "DEBIAN_FRONTEND=noninteractive",
       "KUBERNETES_MINOR=${var.kubernetes_minor}",
